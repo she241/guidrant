@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#062c68">
+  <title>Guidrant Admin Centre</title>
+  <link rel="icon" href="assets/favicon.png">
+  <link rel="stylesheet" href="assets/portal.css">
+  <style>
+    .metric{padding:18px;border:1px solid var(--line);border-radius:16px;background:#fff}
+    .metric b{display:block;font-size:28px;color:var(--navy)}
+    .metric span{color:var(--muted);font-size:13px}
+    .admin-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+    .admin-toolbar{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}
+    .admin-toolbar input{min-width:240px;border:1px solid var(--line);border-radius:12px;padding:11px}
+    .list-item{align-items:flex-start}
+    .list-item small{display:block;margin-top:4px;line-height:1.5}
+    @media(max-width:800px){.admin-summary{grid-template-columns:1fr 1fr}}
+  </style>
+</head>
+<body>
+<header class="site-header"><div class="shell nav"><a class="brand" href="index.html"><img src="assets/guidrent-logo.png" alt="Guidrant"></a><div class="nav-links"><a href="dashboard.html">Dashboard</a><a href="safety.html">Safety</a><a href="support.html">Support</a></div></div></header>
+<section class="hero"><div class="shell"><h1>Admin and trust centre</h1><p>Manage users, listings, agent verification, reports, claims, applications and privacy requests.</p></div></section>
+<main class="page shell">
+  <section id="gate" class="card">
+    <h2>Administrator access required</h2>
+    <p class="muted" id="gateMessage">Sign in with an account that has the admin role.</p>
+    <a class="btn btn-primary" href="account.html?mode=signin">Sign in</a>
+  </section>
+  <section id="admin" hidden>
+    <div class="grid">
+      <section class="card span-12">
+        <div class="admin-toolbar">
+          <div class="actions"><button class="btn btn-primary" onclick="loadAdmin()">Refresh admin data</button><a class="btn btn-outline" href="dashboard.html">Back to dashboard</a></div>
+          <input id="adminSearch" placeholder="Search the current view" oninput="render()">
+        </div>
+      </section>
+      <section class="card span-12">
+        <div class="tabs">
+          <button class="tab active" data-name="overview" onclick="show('overview',this)">Overview</button>
+          <button class="tab" data-name="users" onclick="show('users',this)">Users</button>
+          <button class="tab" data-name="properties" onclick="show('properties',this)">Listings</button>
+          <button class="tab" data-name="agents" onclick="show('agents',this)">Agents</button>
+          <button class="tab" data-name="reports" onclick="show('reports',this)">Reports</button>
+          <button class="tab" data-name="claims" onclick="show('claims',this)">Claims</button>
+          <button class="tab" data-name="data_requests" onclick="show('data_requests',this)">Privacy</button>
+          <button class="tab" data-name="applications" onclick="show('applications',this)">Applications</button>
+        </div>
+        <div id="queue"></div>
+      </section>
+    </div>
+  </section>
+</main>
+<div id="toast" class="toast"></div>
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script src="backend-client.js"></script>
+<script src="app-shell.js"></script>
+<script>
+let data={},active='overview',currentAdminId=null;const U=GuidrentUI;
+const esc=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+const date=value=>value?U.date(value):'—';
+async function boot(){
+  if(!GuidrentBackend.configured){gateMessage.textContent='Supabase is not configured in config.js.';return}
+  const session=(await GuidrentBackend.client.auth.getSession()).data.session;
+  if(!session){gateMessage.textContent='Sign in to open the admin centre.';return}
+  currentAdminId=session.user.id;
+  const profile=await GuidrentBackend.getMyProfile().catch(()=>null);
+  const role=profile?.data?.profile?.role;
+  gate.hidden=role==='admin';admin.hidden=role!=='admin';
+  gateMessage.textContent=role==='admin'?'':`This account is signed in as ${role||'a standard user'}, not an administrator.`;
+  if(role==='admin')loadAdmin();
+}
+async function loadAdmin(){
+  try{
+    const c=GuidrentBackend.client;
+    const results=await Promise.all([
+      c.from('profiles').select('*').order('created_at',{ascending:false}),
+      c.from('properties').select('*').order('updated_at',{ascending:false}),
+      c.from('agent_profiles').select('*, profile:profiles(*)').order('updated_at',{ascending:false}),
+      c.from('reports').select('*').order('updated_at',{ascending:false}),
+      c.from('listing_claims').select('*, property:properties(id,title,area,source_url)').order('updated_at',{ascending:false}),
+      c.from('data_subject_requests').select('*, profile:profiles(id,full_name)').order('updated_at',{ascending:false}),
+      c.from('rental_applications').select('*, property:properties(id,title,area)').order('updated_at',{ascending:false})
+    ]);
+    for(const result of results)if(result.error)throw result.error;
+    data={users:results[0].data,properties:results[1].data,agents:results[2].data,reports:results[3].data,claims:results[4].data,data_requests:results[5].data,applications:results[6].data};
+    render();
+  }catch(error){U.toast(error.message);queue.innerHTML=`<div class="notice"><b>Backend setup required:</b> ${esc(error.message)}</div>`}
+}
+function show(name,button){active=name;document.querySelectorAll('.tab').forEach(item=>item.classList.toggle('active',item.dataset.name===name));render()}
+function matchesSearch(item){
+  const query=(adminSearch.value||'').trim().toLowerCase();
+  return !query||JSON.stringify(item).toLowerCase().includes(query);
+}
+function render(){
+  if(active==='overview'){renderOverview();return}
+  const rows=(data[active]||[]).filter(matchesSearch);
+  queue.innerHTML=`<h2>${esc(active.replace('_',' '))} <small class="muted">(${rows.length})</small></h2>`+(rows.length?`<div class="list">${rows.map(row).join('')}</div>`:`<div class="empty">Nothing in this view.</div>`);
+}
+function renderOverview(){
+  const users=data.users||[],properties=data.properties||[],agents=data.agents||[],reports=data.reports||[];
+  const metrics=[
+    ['Users',users.length],
+    ['Active listings',properties.filter(x=>x.status==='published').length],
+    ['Pending listings',properties.filter(x=>x.status==='pending').length],
+    ['Verified agents',agents.filter(x=>x.verification_status==='verified').length],
+    ['Open reports',reports.filter(x=>['open','reviewing'].includes(x.status)).length],
+    ['Listing claims',(data.claims||[]).filter(x=>['submitted','reviewing'].includes(x.status)).length],
+    ['Applications',(data.applications||[]).filter(x=>['submitted','under_review'].includes(x.status)).length],
+    ['Privacy requests',(data.data_requests||[]).filter(x=>x.status!=='completed').length]
+  ];
+  queue.innerHTML=`<h2>Platform overview</h2><div class="admin-summary">${metrics.map(([label,value])=>`<div class="metric"><b>${value}</b><span>${label}</span></div>`).join('')}</div>`;
+}
+function row(item){
+  if(active==='users'){
+    const isSelf=item.id===currentAdminId;
+    return `<div class="list-item"><div><b>${esc(item.full_name||'Unnamed user')}</b><small>${esc(item.role)} · ${esc(item.status)} · ${esc(item.city||'Accra')}<br>Joined ${date(item.created_at)}</small></div><div class="actions">${item.status==='active'?`<button class="btn btn-danger" ${isSelf?'disabled title="You cannot suspend yourself"':''} onclick="setUserStatus('${item.id}','suspended')">Suspend</button>`:`<button class="btn btn-primary" onclick="setUserStatus('${item.id}','active')">Activate</button>`}</div></div>`;
+  }
+  if(active==='properties')return `<div class="list-item"><div><b>${esc(item.title)}</b><small>${esc(item.area)} · ${esc(item.status)} · ${esc(item.currency)} ${Number(item.price||0).toLocaleString()}<br>${item.source_url?`Imported: ${esc(item.source_url)}`:'Agent submission'}</small></div><div class="actions"><button class="btn btn-primary" onclick="moderateProperty('${item.id}','published')">Publish</button><button class="btn btn-danger" onclick="moderateProperty('${item.id}','rejected')">Reject</button><button class="btn btn-light" onclick="moderateProperty('${item.id}','archived')">Archive</button></div></div>`;
+  if(active==='agents')return `<div class="list-item"><div><b>${esc(item.profile?.full_name||item.agency_name||item.user_id)}</b><small>${esc(item.agency_name||'Independent agent')} · ${esc(item.verification_status)}<br>${esc((item.service_areas||[]).join(', '))}</small></div><div class="actions"><button class="btn btn-primary" onclick="verifyAgent('${item.user_id}','verified')">Verify</button><button class="btn btn-danger" onclick="verifyAgent('${item.user_id}','rejected')">Reject</button></div></div>`;
+  if(active==='reports')return `<div class="list-item"><div><b>${esc(item.reason)}</b><small>${esc(item.details||'No details')}<br>${esc(item.status)} · ${date(item.created_at)}</small></div><div class="actions"><button class="btn btn-light" onclick="reviewReport('${item.id}','reviewing')">Review</button><button class="btn btn-primary" onclick="reviewReport('${item.id}','resolved')">Resolve</button><button class="btn btn-danger" onclick="reviewReport('${item.id}','dismissed')">Dismiss</button></div></div>`;
+  if(active==='claims')return `<div class="list-item"><div><b>${esc(item.property?.title||item.property_id)}</b><small>${esc(item.explanation||'No explanation')}<br>${esc(item.status)}</small></div><div class="actions"><button class="btn btn-light" onclick="reviewClaim('${item.id}','reviewing')">Review</button><button class="btn btn-primary" onclick="reviewClaim('${item.id}','approved')">Approve</button><button class="btn btn-danger" onclick="reviewClaim('${item.id}','rejected')">Reject</button></div></div>`;
+  if(active==='data_requests')return `<div class="list-item"><div><b>${esc(item.request_type)} request</b><small>${esc(item.profile?.full_name||item.user_id)} · ${esc(item.details||'No details')}<br>${esc(item.status)}</small></div><div class="actions"><button class="btn btn-light" onclick="reviewData('${item.id}','processing')">Process</button><button class="btn btn-primary" onclick="reviewData('${item.id}','completed')">Complete</button><button class="btn btn-danger" onclick="reviewData('${item.id}','rejected')">Reject</button></div></div>`;
+  return `<div class="list-item"><div><b>${esc(item.property?.title||item.property_id)}</b><small>${esc(item.status)} · ${date(item.created_at)}<br>Applicant: ${esc(item.applicant_id)}</small></div>${U.status(item.status)}</div>`;
+}
+async function setUserStatus(id,status){
+  try{if(id===currentAdminId&&status!=='active')throw new Error('You cannot suspend your own admin account.');const {error}=await GuidrentBackend.client.from('profiles').update({status}).eq('id',id);if(error)throw error;U.toast('User updated');loadAdmin()}catch(error){U.toast(error.message)}
+}
+async function moderateProperty(id,status){
+  try{const rejection_reason=status==='rejected'?(prompt('Reason for rejection:')||'Requires correction'):null;const payload={status,rejection_reason,is_verified:status==='published',published_at:status==='published'?new Date().toISOString():null};const {error}=await GuidrentBackend.client.from('properties').update(payload).eq('id',id);if(error)throw error;U.toast('Listing updated');loadAdmin()}catch(error){U.toast(error.message)}
+}
+async function verifyAgent(id,verification_status){
+  try{const {error}=await GuidrentBackend.client.from('agent_profiles').update({verification_status}).eq('user_id',id);if(error)throw error;U.toast('Agent updated');loadAdmin()}catch(error){U.toast(error.message)}
+}
+async function reviewReport(id,status){
+  try{const resolution_note=['resolved','dismissed'].includes(status)?prompt('Resolution note:')||null:null;const {error}=await GuidrentBackend.client.from('reports').update({status,resolution_note,assigned_admin_id:currentAdminId}).eq('id',id);if(error)throw error;U.toast('Report updated');loadAdmin()}catch(error){U.toast(error.message)}
+}
+async function reviewClaim(id,status){
+  try{const {error}=await GuidrentBackend.client.from('listing_claims').update({status,reviewer_id:currentAdminId,reviewed_at:['approved','rejected'].includes(status)?new Date().toISOString():null}).eq('id',id);if(error)throw error;U.toast('Claim updated');loadAdmin()}catch(error){U.toast(error.message)}
+}
+async function reviewData(id,status){
+  try{const {error}=await GuidrentBackend.client.from('data_subject_requests').update({status,assigned_admin_id:currentAdminId,completed_at:status==='completed'?new Date().toISOString():null}).eq('id',id);if(error)throw error;U.toast('Privacy request updated');loadAdmin()}catch(error){U.toast(error.message)}
+}
+boot();
+</script>
+</body>
+</html>
