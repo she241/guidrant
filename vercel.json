@@ -1,0 +1,22 @@
+{
+  "version": 2,
+  "public": false,
+  "cleanUrls": true,
+  "trailingSlash": false,
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {"key":"X-Content-Type-Options","value":"nosniff"},
+        {"key":"Referrer-Policy","value":"strict-origin-when-cross-origin"},
+        {"key":"X-Frame-Options","value":"SAMEORIGIN"},
+        {"key":"Permissions-Policy","value":"camera=(), microphone=(), geolocation=(self), payment=()"}
+      ]
+    }
+  ],
+  "rewrites": [
+    {"source":"/dashboard","destination":"/dashboard.html"},
+    {"source":"/account","destination":"/account.html"},
+    {"source":"/admin","destination":"/admin.html"}
+  ]
+}

@@ -1,0 +1,14 @@
+services:
+  api:
+    build: ./api
+    env_file: ./api/.env
+    ports:
+      - "8787:8787"
+    restart: unless-stopped
+  frontend:
+    image: nginx:alpine
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+    ports:
+      - "5500:80"
+    restart: unless-stopped
